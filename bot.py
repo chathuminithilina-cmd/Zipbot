@@ -1,97 +1,90 @@
 import os
 import zipfile
+import asyncio
 import shutil
-import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.request import HTTPXRequest  # Correctly imported
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import FSInputFile
 
-# 1. Logging Setup
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Get token from Railway Environment Variables
+API_TOKEN = os.getenv("BOT_TOKEN")
+TEMP_DIR = "user_files"
 
-# 2. Configuration
-TOKEN = os.getenv('BOT_TOKEN')
-# Use your Railway API internal domain here
-LOCAL_API_URL = "telegram-bot-api-production-fc13.up.railway.app:4000" 
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
 
-user_files = {}
+# Dictionary to keep track of files per user
+user_data = {}
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    path = f"downloads_{user_id}"
-    if os.path.exists(path):
-        shutil.rmtree(path)
-    os.makedirs(path, exist_ok=True)
-    user_files[user_id] = []
-    await update.message.reply_text("🚀 Bot Ready! Send media then /zip")
-
-async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in user_files:
-        user_files[user_id] = []
-        os.makedirs(f"downloads_{user_id}", exist_ok=True)
-
-    status = await update.message.reply_text("📥 Downloading...")
-    try:
-        if update.message.photo:
-            tg_file = await update.message.photo[-1].get_file()
-            name = f"{tg_file.file_id}.jpg"
-        elif update.message.video:
-            tg_file = await update.message.video.get_file()
-            name = update.message.video.file_name or f"{tg_file.file_id}.mp4"
-        elif update.message.document:
-            tg_file = await update.message.document.get_file()
-            name = update.message.document.file_name or f"{tg_file.file_id}.file"
-        else: return
-
-        save_path = os.path.join(f"downloads_{user_id}", name)
-        await tg_file.download_to_drive(custom_path=save_path)
-        user_files[user_id].append(save_path)
-        await status.edit_text(f"✅ Received! Total: {len(user_files[user_id])}")
-    except Exception as e:
-        await status.edit_text(f"❌ Error: {e}")
-
-async def create_zip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in user_files or not user_files[user_id]:
-        await update.message.reply_text("Empty queue!")
-        return
-
-    wait = await update.message.reply_text("🗜 Zipping...")
-    zip_path = f"Archive_{user_id}.zip"
-
-    try:
-        # Use ZIP_STORED for speed on Trial plan (no compression, just bundling)
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
-            for file in user_files[user_id]:
-                zipf.write(file, os.path.basename(file))
-
-        await wait.edit_text("📤 Uploading...")
-        with open(zip_path, 'rb') as f:
-            await update.message.reply_document(document=f, read_timeout=3600, write_timeout=3600)
-    finally:
-        if os.path.exists(f"downloads_{user_id}"):
-            shutil.rmtree(f"downloads_{user_id}")
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
-        user_files[user_id] = []
-        await wait.delete()
-
-def main():
-    # Use 3600 seconds (1 hour) to ensure it never times out during large zips
-    t_request = HTTPXRequest(connect_timeout=60, read_timeout=3600, write_timeout=3600)
-
-    # DONT use 'https' for internal Railway networking
-    # Ensure the port 8081 is included
-    internal_url = "telegram-bot-api-production-fc13.up.railway.app:4000" 
-
-    app = (
-        Application.builder()
-        .token(TOKEN)
-        .base_url(f"http://{internal_url}/bot") # Force HTTP
-        .local_mode(True)
-        .request(t_request)
-        .build()
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer(
+        "👋 **Welcome to Zip Maker!**\n\n"
+        "1. Send me any files/documents.\n"
+        "2. Type /zip when you are finished.\n"
+        "3. I'll send you the archive and clean up!"
     )
-    # ... rest of handlers ...
+
+@dp.message(F.document)
+async def handle_docs(message: types.Message):
+    user_id = str(message.from_user.id)
+    if user_id not in user_data:
+        user_data[user_id] = []
+    
+    # Create a unique folder for the user
+    path = os.path.join(TEMP_DIR, user_id)
+    os.makedirs(path, exist_ok=True)
+    
+    file_id = message.document.file_id
+    file = await bot.get_file(file_id)
+    file_name = message.document.file_name or f"file_{file_id[:5]}"
+    destination = os.path.join(path, file_name)
+    
+    await bot.download_file(file.file_path, destination)
+    user_data[user_id].append(destination)
+    
+    await message.answer(f"✅ Added: `{file_name}`")
+
+@dp.message(Command("zip"))
+async def cmd_zip(message: types.Message):
+    user_id = str(message.from_user.id)
+    
+    if user_id not in user_data or not user_data[user_id]:
+        return await message.answer("❌ You haven't sent any files yet!")
+
+    status_msg = await message.answer("📦 Zipping your files... please wait.")
+    zip_name = f"archive_{user_id}.zip"
+    
+    try:
+        # Create the zip file
+        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in user_data[user_id]:
+                if os.path.exists(file):
+                    zipf.write(file, os.path.basename(file))
+
+        # Send the file
+        await message.reply_document(FSInputFile(zip_name))
+        
+    except Exception as e:
+        await message.answer(f"⚠️ An error occurred: {e}")
+    
+    finally:
+        # Cleanup: Delete the zip and the user's folder
+        if os.path.exists(zip_name):
+            os.remove(zip_name)
+        
+        user_folder = os.path.join(TEMP_DIR, user_id)
+        if os.path.exists(user_folder):
+            shutil.rmtree(user_folder)
+            
+        user_data[user_id] = []
+        await status_msg.delete()
+
+async def main():
+    # Ensure temp directory exists on startup
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    print("Bot is running...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
