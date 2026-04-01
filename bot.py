@@ -1,4 +1,6 @@
 import os
+from telegram.request 
+import HTTPXRequest
 import zipfile
 import shutil
 import logging
@@ -145,9 +147,20 @@ async def create_zip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- MAIN ---
 
 def main():
-    if not TOKEN:
-        print("FATAL: No BOT_TOKEN environment variable found.")
-        return
+    # ... your TOKEN and URL logic ...
+
+    # Create a request object with very long timeouts (in seconds)
+    # 3600 seconds = 1 hour
+    t_request = HTTPXRequest(connect_timeout=60, read_timeout=3600, write_timeout=3600)
+
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .base_url(f"http://{LOCAL_API_URL}/bot")
+        .local_mode(True)
+        .request(t_request) # <--- Add this line here
+        .build()
+    )
 
     # Build application with LOCAL MODE enabled
     app = (
