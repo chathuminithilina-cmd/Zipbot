@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # 2. Configuration
 TOKEN = os.getenv('BOT_TOKEN')
 # Use your Railway API internal domain here
-LOCAL_API_URL = "telegram-bot-api-production-fc13.up.railway.app:8081" 
+LOCAL_API_URL = "telegram-bot-api-production-fc13.up.railway.app:4000" 
 
 user_files = {}
 
@@ -84,7 +84,7 @@ def main():
 
     # DONT use 'https' for internal Railway networking
     # Ensure the port 8081 is included
-    internal_url = "telegram-bot-api-production-fc13.up.railway.app:8081" 
+    internal_url = "telegram-bot-api-production-fc13.up.railway.app:4000" 
 
     app = (
         Application.builder()
