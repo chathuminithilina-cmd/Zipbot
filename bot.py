@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # 2. Configuration
 TOKEN = os.getenv('BOT_TOKEN')
 # Use your Railway API internal domain here
-LOCAL_API_URL = "telegram-bot-api-production-6cae.up.railway.app:8081" 
+LOCAL_API_URL = "telegram-bot-api-production-fc13.up.railway.app:8081" 
 
 user_files = {}
 
@@ -79,22 +79,19 @@ async def create_zip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await wait.delete()
 
 def main():
-    # 3. Create request with 1-hour timeout for 2GB files
+    # Use 3600 seconds (1 hour) to ensure it never times out during large zips
     t_request = HTTPXRequest(connect_timeout=60, read_timeout=3600, write_timeout=3600)
+
+    # DONT use 'https' for internal Railway networking
+    # Ensure the port 8081 is included
+    internal_url = "telegram-bot-api-production-fc13.up.railway.app:8081" 
 
     app = (
         Application.builder()
         .token(TOKEN)
-        .base_url(f"http://{LOCAL_API_URL}/bot")
+        .base_url(f"http://{internal_url}/bot") # Force HTTP
         .local_mode(True)
-        .request(t_request) # Connects the timeout settings
+        .request(t_request)
         .build()
     )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("zip", create_zip))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_media))
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
+    # ... rest of handlers ...
